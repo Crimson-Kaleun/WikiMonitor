@@ -64,12 +64,12 @@ POST /api/events/check-now
 #### Получить текущее ключевое слово
 
 ```http
-GET /api/config/keyword
+GET /api/events/keyword
 ```
 
 #### Изменить ключевое слово
 ```http
-POST /api/config/keyword?keyword=Java
+POST /api/events/keyword?keyword=Java
 ```
 
 #### Проверить с произвольным ключевым словом (ключевое слово меняется)
@@ -100,3 +100,95 @@ POST /api/events/check-now?keyword=Python
     Перейти в раздел Topics → my_topic
 
     Нажать Messages для просмотра сообщений
+
+
+
+## 📊 Схема взаимодействия
+
+```
+Scheduler (@Scheduled)
+  │
+  ├─→ WikiMonitorService.checkWikiChanges()
+  │     │
+  │     ├─→ properties.getKeyword()  // По умолчанию ключевое слово "Word"
+  │     │
+  │     ├─→ WikiSearchService.getSearchResults("Word")
+  │     │     └─→ RestClient → Wikipedia API
+  │     │           └─→ WikiSearchResponse { keyword, titles[], urls[] }
+  │     │
+  │     ├─→ SnapshotService.getLatestActiveSnapshot("Word")
+  │     │     └─→ WikiSnapshotRepository.findTopByKeyword...()
+  │     │           └─→ WikiSnapshot (предыдущий снимок) или пусто
+  │     │
+  │     ├─→ DiffService.compareTitles(oldTitles, newTitles)
+  │     │     └─→ List<ChangeEvent> [{ADDED, "WordPress 6.0"}, {REMOVED, "WordPerfect"}]
+  │     │
+  │     ├─→ для каждого ChangeEvent:
+  │     │     KafkaProducerService.sendMessage(formattedMessage)
+  │     │       └─→ KafkaTemplate.send("my_topic", message)
+  │     │             └─→ Apache Kafka
+  │     │
+  │     └─→ SnapshotService.saveSnapshot("Word", titles, urls)
+  │           └─→ WikiSnapshotRepository.save(newSnapshot)
+  │                 └─→ H2 Database
+
+```
+
+Ручной запуск через REST
+```text
+POST /api/check?keyword=Java
+  │
+  └─→ WikiController.checkNow("Java")
+        │
+        └─→ WikiMonitorService.checkWikiChanges("Java")
+              │
+              └─→ (дальше аналогичный поток, но с "Java")
+
+```
+
+
+Поток Kafka
+```text
+
+Отправка:
+WikiMonitorService → KafkaProducerService → KafkaTemplate → Kafka Broker (topic: my_topic)
+
+Получение:
+Kafka Broker (topic: my_topic) → KafkaConsumerService.consumeMessage()
+  └─→ System.out.println("Получено сообщение: ...")
+```
+
+Изменение конфигурации
+```text
+
+POST /api/config/keyword?value=Python
+  │
+  └─→ WikiController.setKeyword("Python")
+        │
+        └─→ properties.setKeyword("Python")  // в памяти
+              │
+              └─→ при следующем поиске Scheduler подхватит новое значение
+```
+
+Поиск без сохранения
+```text
+GET /api/search?query=Spring
+  │
+  └─→ WikiController.search("Spring")
+        │
+        └─→ WikiSearchService.getSearchResults("Spring")
+              └─→ RestClient → Wikipedia API
+                    └─→ сразу возвращаем JSON пользователю
+```
+
+Краткая суть связей
+```text
+
+Controller → WikiMonitorService → WikiSearchService → Wikipedia
+                               → SnapshotService → H2
+                               → DiffService → List<ChangeEvent>
+                               → KafkaProducerService → Kafka
+
+Kafka → KafkaConsumerService → sout
+
+```
