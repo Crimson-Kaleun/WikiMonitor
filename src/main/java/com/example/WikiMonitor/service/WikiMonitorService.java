@@ -50,16 +50,24 @@ public class WikiMonitorService {
                     log.info("Обнаружено {} изменений", changes.size());
 
                     for (ChangeEvent event : changes) {
-                        String message = String.format("Ключевое слово: %s, Изменение: %s, Статья: %s",
-                                KEYWORD, event.getType(), event.getTitle());
-                        kafkaProducerService.sendMessage(message);
-                        log.info("Отправлено: {}", message);
+                        //String message = String.format("Ключевое слово: %s, Изменение: %s, Статья: %s",
+                                //KEYWORD, event.getType(), event.getTitle());
+                        //kafkaProducerService.sendMessage(message);
+                        //log.info("Отправлено: {}", message);
+                        kafkaProducerService.sendMessage(event);
+                        //log.info("Отправлено: {}", event.getType());
                     }
                 } else {
                     log.info("Изменений не обнаружено");
                 }
             } else {
                 log.info("Предыдущий снимок не найден. Это первый запуск по ключевому слову '{}'", KEYWORD);
+                for (String titles : currentTitles) {
+                    ChangeEvent event = new ChangeEvent("ADDED", titles);
+                    kafkaProducerService.sendMessage(event);
+                    //log.info("Отправлено: {}", event.getType());
+                }
+
             }
 
             snapshotService.saveSnapshot(KEYWORD, currentTitles, response.getUrls());
